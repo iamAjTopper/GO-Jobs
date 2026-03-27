@@ -16,6 +16,8 @@ func main() {
 	r := gin.Default()
 	//routes
 	r.POST("/jobs", handler.CreateJob)
+	r.GET("/jobs", handler.GetJobs)
+	r.GET("/jobs/:id", handler.GetJobsById)
 
 	//start worker her
 	go worker.StartWorker("worker-1")

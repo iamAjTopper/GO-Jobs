@@ -33,8 +33,17 @@ func processJob(job models.Job, workerName string) {
 	time.Sleep(2 * time.Second)
 
 	//simulating failure
-	if job.ID%3 == 0 {
-		log.Printf("[%s] Job %d failed \n", workerName, job.ID)
+	if job.Type == "fail" {
+
+		//stopping inmfinite loop
+		if job.Retries >= 3 {
+			log.Printf("[%s] Job %d permanently failed\n", workerName, job.ID)
+
+			db.DB.Model(&job).Update("status", "failed")
+			return
+		}
+		log.Printf("[%s] Job %d failed (retry %d)\n", workerName, job.ID, job.Retries+1)
+
 		//retring fsiled work
 		db.DB.Model(&job).Updates(map[string]interface{}{
 			"status":  "pending",

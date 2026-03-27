@@ -28,3 +28,22 @@ func CreateJob(c *gin.Context) {
 	c.JSON(http.StatusOK, job)
 
 }
+
+func GetJobs(c *gin.Context) {
+	var jobs []models.Job
+	db.DB.Find(&jobs)
+	c.JSON(200, jobs)
+}
+
+func GetJobsById(c *gin.Context) {
+	id := c.Param("id")
+
+	var job models.Job
+	result := db.DB.First(&job, id)
+
+	if result.Error != nil {
+		c.JSON(404, gin.H{"error": "Job not found"})
+		return
+	}
+	c.JSON(200, job)
+}
