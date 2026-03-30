@@ -12,6 +12,8 @@ import (
 func StartWorker(name string) {
 	//infinite loop to keep the worker running
 	for {
+		recoverStuckJobs()
+
 		job, err := fetchJob()
 
 		if err != nil {
@@ -29,29 +31,35 @@ func StartWorker(name string) {
 }
 
 func processJob(job models.Job, workerName string) {
-	//stimulaing work
 	time.Sleep(2 * time.Second)
 
-	//simulating failure
-	if job.Type == "fail" {
+	switch job.Type {
 
-		//stopping inmfinite loop
+	case "email":
+		log.Printf("[%s] Sending email for job %d\n", workerName, job.ID)
+
+	case "report":
+		log.Printf("[%s] Generating report for job %d\n", workerName, job.ID)
+
+	case "fail":
 		if job.Retries >= 3 {
 			log.Printf("[%s] Job %d permanently failed\n", workerName, job.ID)
-
 			db.DB.Model(&job).Update("status", "failed")
 			return
 		}
+
 		log.Printf("[%s] Job %d failed (retry %d)\n", workerName, job.ID, job.Retries+1)
 
-		//retring fsiled work
 		db.DB.Model(&job).Updates(map[string]interface{}{
 			"status":  "pending",
 			"retries": job.Retries + 1,
 		})
+
 		return
+
+	default:
+		log.Printf("[%s] Unknown job type for job %d\n", workerName, job.ID)
 	}
-	log.Printf("[%s] Job %d completed\n", workerName, job.ID)
 
 	db.DB.Model(&job).Update("status", "done")
 }
@@ -89,4 +97,13 @@ func fetchJob() (*models.Job, error) {
 	tx.Commit()
 
 	return &job, nil
+}
+
+func recoverStuckJobs() {
+	db.DB.Exec(`
+	UPDATE jobs
+	SET status = 'pending'
+	WHERE status = 'processing'
+	AND updated_at < NOW() - INTERVAL '30 seconds'
+	`)
 }

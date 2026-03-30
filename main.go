@@ -10,6 +10,7 @@ import (
 
 func main() {
 	db.Connect()
+	db.ConnectRedis()
 
 	db.DB.AutoMigrate(&models.Job{})
 
