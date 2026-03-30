@@ -10,23 +10,25 @@ import (
 )
 
 func StartWorker(name string) {
-	//infinite loop to keep the worker running
 	for {
-		recoverStuckJobs()
-
-		job, err := fetchJob()
-
+		//waiting for the jiob fro9m redis
+		// BRPOP will "block" (pause the code) until a job ID is available
+		// The '0' means wait forever until something arrives
+		result, err := db.RDB.BRPop(db.Ctx, 0, "jobs_queue").Result()
 		if err != nil {
-			log.Println("Error fetching jobs", err)
+			log.Println("Redis error:", err)
 			continue
 		}
-		//if no job availabe telling the wroker to sleep for 2sec
-		if job == nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
+		//1 will be the real job that we opushed
+		jobID := result[1]
+
+		//getting the full data fro he postgres now
+		var job models.Job
+		db.DB.First(&job, jobID)
+
 		log.Printf("[%s] Processing job ID: %d\n", name, job.ID)
-		processJob(*job, name)
+
+		processJob(job, name)
 	}
 }
 
@@ -62,48 +64,4 @@ func processJob(job models.Job, workerName string) {
 	}
 
 	db.DB.Model(&job).Update("status", "done")
-}
-
-func fetchJob() (*models.Job, error) {
-	//new job var
-	var job models.Job
-
-	//starting the transaction
-	tx := db.DB.Begin()
-
-	//the p[ower query
-	err := tx.Raw(`SELECT * FROM jobs
-	WHERE status = 'pending'
-	ORDER BY id
-	FOR UPDATE SKIP LOCKED
-	LIMIT 1
-	`).Scan(&job).Error
-
-	//safety check
-	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	//no job found
-	if job.ID == 0 {
-		tx.Rollback()
-		return nil, nil
-	}
-	//marking as processing inside same transaction
-	tx.Model(&job).Update("status", "processing")
-
-	//commitng he chanegs
-	tx.Commit()
-
-	return &job, nil
-}
-
-func recoverStuckJobs() {
-	db.DB.Exec(`
-	UPDATE jobs
-	SET status = 'pending'
-	WHERE status = 'processing'
-	AND updated_at < NOW() - INTERVAL '30 seconds'
-	`)
 }

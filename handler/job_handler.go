@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/ankush/go-jobs/db"
@@ -21,8 +22,14 @@ func CreateJob(c *gin.Context) {
 	job.Status = "pending"
 	job.Retries = 0
 
-	//sacve he databse
+	//save he databse
 	db.DB.Create(&job)
+
+	//pushing job id to reddis queue
+	err := db.RDB.LPush(db.Ctx, "jobs_queue", job.ID).Err()
+	if err != nil {
+		log.Println("Failed to push job o redis:", err)
+	}
 
 	//send back 200
 	c.JSON(http.StatusOK, job)
