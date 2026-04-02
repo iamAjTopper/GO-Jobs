@@ -57,6 +57,11 @@ func processJob(job models.Job, workerName string) {
 			"retries": job.Retries + 1,
 		})
 
+		//requeue in redis
+		err := db.RDB.LPush(db.Ctx, "jobs_queue", job.ID).Err()
+		if err != nil {
+			log.Println("Failed to requeue job:", err)
+		}
 		return
 
 	default:
