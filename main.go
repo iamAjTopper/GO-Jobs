@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/ankush/go-jobs/db"
 	"github.com/ankush/go-jobs/handler"
 	"github.com/ankush/go-jobs/models"
@@ -11,6 +13,11 @@ import (
 func main() {
 	db.Connect()
 	db.ConnectRedis()
+
+	err := db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream", "workers", "0").Err()
+	if err != nil {
+		log.Println("Consumer group may already exists", err)
+	}
 
 	db.DB.AutoMigrate(&models.Job{})
 

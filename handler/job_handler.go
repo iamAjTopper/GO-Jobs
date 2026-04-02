@@ -7,6 +7,7 @@ import (
 	"github.com/ankush/go-jobs/db"
 	"github.com/ankush/go-jobs/models"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 func CreateJob(c *gin.Context) {
@@ -26,9 +27,15 @@ func CreateJob(c *gin.Context) {
 	db.DB.Create(&job)
 
 	//pushing job id to reddis queue
-	err := db.RDB.LPush(db.Ctx, "jobs_queue", job.ID).Err()
+	_, err := db.RDB.XAdd(db.Ctx, &redis.XAddArgs{
+		Stream: "jobs_stream",
+		Values: map[string]interface{}{
+			"job_id": job.ID,
+		},
+	}).Result()
+
 	if err != nil {
-		log.Println("Failed to push job o redis:", err)
+		log.Println("Failed to push job to Redis stream:", err)
 	}
 
 	//send back 200
