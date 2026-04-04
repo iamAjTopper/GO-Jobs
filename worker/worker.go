@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"time"
@@ -13,7 +14,12 @@ import (
 )
 
 func StartWorker(name string) {
+
 	for {
+		// 👇 ONLY worker-1 will reclaim
+		if name == "worker-1" {
+			reclaimStuckJobs(name)
+		}
 		//waiting for the jiob fro9m redis
 		// BRPOP will "block" (pause the code) until a job ID is available
 		// The '0' means wait forever until something arrives
@@ -22,11 +28,14 @@ func StartWorker(name string) {
 			Consumer: name,                         //the employee name like worker 1
 			Streams:  []string{"jobs_stream", ">"}, // the > means Give me ONLY new messages that no one else has seen
 			Count:    1,                            //just grab one job at a time
-			Block:    0,                            //eait forever until job returns
+			Block:    2 * time.Second,              //eait forever until job returns
 		}).Result()
 
 		if err != nil {
-			log.Println("Redis read errro:", err)
+			if err == redis.Nil {
+				continue //no new job, normal behavior
+			}
+			log.Println("Redis read error", err)
 			continue
 		}
 
@@ -101,4 +110,51 @@ func processJob(job models.Job, workerName string) bool {
 
 	db.DB.Model(&job).Update("status", "done")
 	return true
+}
+
+var lastId = "0"
+
+func reclaimStuckJobs(name string) {
+	res, nextID, err := db.RDB.XAutoClaim(db.Ctx, &redis.XAutoClaimArgs{
+		Stream:   "jobs_stream",
+		Group:    "workers",
+		Consumer: name,            //the worker whihc is douing the reclaiming
+		MinIdle:  3 * time.Second, //onlty grab jobs that have been stuck for more than 5 sec
+		Start:    lastId,          //start cgecking from very beginning of the stream
+		Count:    5,               //grab upo 5 stuck jibs a a time
+	}).Result()
+
+	if err != nil {
+		log.Println("XAUTOCLAIM error", err)
+		return
+	}
+	//update cursos
+	lastId = nextID
+
+	if len(res) == 0 {
+		return
+	}
+
+	log.Println("Reclaimed jobs found...")
+
+	for _, msg := range res {
+		//idnetiofy jiobs from the redis message
+		jobIDStr := fmt.Sprintf("%v", msg.Values["job_id"])
+		jobId, _ := strconv.Atoi(jobIDStr)
+
+		var job models.Job
+		db.DB.First(&job, jobId)
+
+		log.Printf("[%s] Reclaimed job ID: %d\n", name, jobId)
+
+		//trying to prtocess it again
+		success := processJob(job, name)
+
+		//only acknowledge if it acttually worked this time
+		if success {
+			db.RDB.XAck(db.Ctx, "jobs_stream", "workers", msg.ID)
+		}
+
+	}
+
 }
