@@ -13,66 +13,84 @@ import (
 	"github.com/ankush/go-jobs/models"
 )
 
+// each worker will have its own pool (so free & premium don't block each other)
 func StartWorker(name string, stream string) {
 
+	//limit concurrency → max 3 jobs at once per worker
+	var workerPool = make(chan struct{}, 3)
+
 	for {
-		// 👇 ONLY worker-1 will reclaim
+		// 👇 ONLY one worker handles reclaim (avoid duplicate reclaim chaos)
 		if name == "worker-free" {
 			reclaimStuckJobs(name, stream)
 		}
-		//waiting for the jiob fro9m redis
-		// BRPOP will "block" (pause the code) until a job ID is available
-		// The '0' means wait forever until something arrives
+
+		//waiting for the job from redis
+		//XREADGROUP will block for 2 sec if no job (not forever like before)
 		streams, err := db.RDB.XReadGroup(db.Ctx, &redis.XReadGroupArgs{
-			Group:    "workers",             //the team name, all worker in his group sdhare the load
-			Consumer: name,                  //the employee name like worker 1
-			Streams:  []string{stream, ">"}, // the > means Give me ONLY new messages that no one else has seen
-			Count:    1,                     //just grab one job at a time
-			Block:    2 * time.Second,       //eait forever until job returns
+			Group:    "workers",             //all workers share this group
+			Consumer: name,                  //worker identity (worker-free / worker-premium)
+			Streams:  []string{stream, ">"}, //IMPORTANT → use dynamic stream (free/premium)
+			Count:    1,                     //grab 1 job at a time
+			Block:    2 * time.Second,       //wait max 2 sec for new job
 		}).Result()
 
+		//handle redis errors properly
 		if err != nil {
 			if err == redis.Nil {
-				continue //no new job, normal behavior
+				continue //no new job → normal behavior
 			}
-			log.Println("Redis read error", err)
+			log.Println("Redis read error:", err)
 			continue
 		}
 
-		//safety check
+		//safety check (sometimes redis returns empty)
 		if len(streams) == 0 || len(streams[0].Messages) == 0 {
 			continue
 		}
 
-		////digging into the resul to get the frist message
+		//get the first message from stream
 		msg := streams[0].Messages[0]
 
-		//streams store everything as strings/interface so we convert job_id back to inetger
+		//streams store everything as interface{} → convert safely
 		jobIDStr := fmt.Sprintf("%v", msg.Values["job_id"])
 		jobID, err := strconv.Atoi(jobIDStr)
-
 		if err != nil {
-			log.Println("Invalid job_id", err)
+			log.Println("Invalid job_id:", err)
 			continue
 		}
 
-		//Go get the actual data from our postgres
+		//fetch full job data from postgres
 		var job models.Job
 		db.DB.First(&job, jobID)
 
-		log.Printf("[%s] Processing job ID: %d\n", name, job.ID)
+		//acquire slot → if 3 jobs already running, this will wait
+		workerPool <- struct{}{}
 
-		//do the work
-		success := processJob(job, name)
+		//IMPORTANT: copy values to avoid goroutine issues
+		jobCopy := job
+		msgID := msg.ID
 
-		//ACK only if success
-		if success {
-			err := db.RDB.XAck(db.Ctx, stream, "workers", msg.ID).Err()
-			if err != nil {
-				log.Println("Failed to ACK:", err)
+		//run job in goroutine (parallel execution)
+		go func() {
+			//release slot when done (VERY IMPORTANT)
+			defer func() { <-workerPool }()
+
+			//now log when actually processing starts (not before)
+			log.Printf("[%s] Processing job ID: %d\n", name, jobCopy.ID)
+
+			//process job
+			success := processJob(jobCopy, name)
+
+			//ACK only if job completed successfully
+			//this removes it from PEL (important for reliability)
+			if success {
+				err := db.RDB.XAck(db.Ctx, stream, "workers", msgID).Err()
+				if err != nil {
+					log.Println("Failed to ACK:", err)
+				}
 			}
-		}
-
+		}()
 	}
 }
 
