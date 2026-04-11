@@ -13,22 +13,22 @@ import (
 	"github.com/ankush/go-jobs/models"
 )
 
-func StartWorker(name string) {
+func StartWorker(name string, stream string) {
 
 	for {
 		// 👇 ONLY worker-1 will reclaim
-		if name == "worker-1" {
-			reclaimStuckJobs(name)
+		if name == "worker-free" {
+			reclaimStuckJobs(name, stream)
 		}
 		//waiting for the jiob fro9m redis
 		// BRPOP will "block" (pause the code) until a job ID is available
 		// The '0' means wait forever until something arrives
 		streams, err := db.RDB.XReadGroup(db.Ctx, &redis.XReadGroupArgs{
-			Group:    "workers",                    //the team name, all worker in his group sdhare the load
-			Consumer: name,                         //the employee name like worker 1
-			Streams:  []string{"jobs_stream", ">"}, // the > means Give me ONLY new messages that no one else has seen
-			Count:    1,                            //just grab one job at a time
-			Block:    2 * time.Second,              //eait forever until job returns
+			Group:    "workers",             //the team name, all worker in his group sdhare the load
+			Consumer: name,                  //the employee name like worker 1
+			Streams:  []string{stream, ">"}, // the > means Give me ONLY new messages that no one else has seen
+			Count:    1,                     //just grab one job at a time
+			Block:    2 * time.Second,       //eait forever until job returns
 		}).Result()
 
 		if err != nil {
@@ -48,7 +48,7 @@ func StartWorker(name string) {
 		msg := streams[0].Messages[0]
 
 		//streams store everything as strings/interface so we convert job_id back to inetger
-		jobIDStr := msg.Values["job_id"].(string)
+		jobIDStr := fmt.Sprintf("%v", msg.Values["job_id"])
 		jobID, err := strconv.Atoi(jobIDStr)
 
 		if err != nil {
@@ -67,7 +67,7 @@ func StartWorker(name string) {
 
 		//ACK only if success
 		if success {
-			err := db.RDB.XAck(db.Ctx, "jobs_stream", "worker", msg.ID).Err()
+			err := db.RDB.XAck(db.Ctx, stream, "workers", msg.ID).Err()
 			if err != nil {
 				log.Println("Failed to ACK:", err)
 			}
@@ -78,6 +78,11 @@ func StartWorker(name string) {
 
 func processJob(job models.Job, workerName string) bool {
 	time.Sleep(2 * time.Second)
+
+	if job.Processed {
+		log.Printf("[%s] Job %d already processed, skipping\n", workerName, job.ID)
+		return true
+	}
 
 	switch job.Type {
 
@@ -90,11 +95,17 @@ func processJob(job models.Job, workerName string) bool {
 	case "fail":
 		if job.Retries >= 3 {
 			log.Printf("[%s] Job %d permanently failed\n", workerName, job.ID)
-			db.DB.Model(&job).Update("status", "failed")
+			db.DB.Model(&job).Updates(map[string]interface{}{
+				"status":    "failed",
+				"processed": true,
+			})
 			return true // stop retrying → ACK it
 		}
 
-		log.Printf("[%s] Job %d failed (retry %d)\n", workerName, job.ID, job.Retries+1)
+		//backoff
+		delay := time.Duration((job.Retries+1)*2) * time.Second
+		log.Printf("[%s] Job %d failed (retry %d) -> waiting %v\n", workerName, job.ID, job.Retries+1, delay)
+		time.Sleep(delay)
 
 		db.DB.Model(&job).Updates(map[string]interface{}{
 			"status":  "pending",
@@ -108,15 +119,18 @@ func processJob(job models.Job, workerName string) bool {
 		return true
 	}
 
-	db.DB.Model(&job).Update("status", "done")
+	db.DB.Model(&job).Updates(map[string]interface{}{
+		"status":    "done",
+		"processed": true,
+	})
 	return true
 }
 
 var lastId = "0"
 
-func reclaimStuckJobs(name string) {
+func reclaimStuckJobs(name string, stream string) {
 	res, nextID, err := db.RDB.XAutoClaim(db.Ctx, &redis.XAutoClaimArgs{
-		Stream:   "jobs_stream",
+		Stream:   stream,
 		Group:    "workers",
 		Consumer: name,            //the worker whihc is douing the reclaiming
 		MinIdle:  3 * time.Second, //onlty grab jobs that have been stuck for more than 5 sec

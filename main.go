@@ -14,6 +14,9 @@ func main() {
 	db.Connect()
 	db.ConnectRedis()
 
+	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_free", "workers", "0")
+	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_premium", "workers", "0")
+
 	err := db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream", "workers", "0").Err()
 	if err != nil {
 		log.Println("Consumer group may already exists", err)
@@ -28,8 +31,8 @@ func main() {
 	r.GET("/jobs/:id", handler.GetJobsById)
 
 	//start worker her
-	go worker.StartWorker("worker-1")
-	go worker.StartWorker("worker-2")
+	go worker.StartWorker("worker-free", "jobs_stream_free")
+	go worker.StartWorker("worker-premium", "jobs_stream_premium")
 
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "Server running"})

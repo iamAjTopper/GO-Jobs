@@ -27,8 +27,14 @@ func CreateJob(c *gin.Context) {
 	db.DB.Create(&job)
 
 	//pushing job id to reddis queue
+
+	stream := "jobs_stream_free"
+
+	if job.Priority == "premium" {
+		stream = "jobs_stream_premium"
+	}
 	_, err := db.RDB.XAdd(db.Ctx, &redis.XAddArgs{
-		Stream: "jobs_stream",
+		Stream: stream,
 		Values: map[string]interface{}{
 			"job_id": job.ID,
 		},

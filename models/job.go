@@ -8,6 +8,8 @@ type Job struct {
 	Paylaod   string
 	Status    string
 	Retries   int
+	Processed bool   `gorm:"default:false"`
+	Priority  string `gorm:"default:free"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
