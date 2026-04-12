@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ankush/go-jobs/db"
-
-	"github.com/redis/go-redis/v9"
-
 	"github.com/ankush/go-jobs/models"
+	"github.com/redis/go-redis/v9"
 )
+
+var Wg sync.WaitGroup
+var Shutdown = false
 
 // each worker will have its own pool (so free & premium don't block each other)
 func StartWorker(name string, stream string) {
@@ -19,20 +21,26 @@ func StartWorker(name string, stream string) {
 	//limit concurrency → max 3 jobs at once per worker
 	var workerPool = make(chan struct{}, 3)
 
-	for {
+	for !Shutdown {
+
 		// 👇 ONLY one worker handles reclaim (avoid duplicate reclaim chaos)
-		if name == "worker-free" {
+		if name == "worker-free" && !Shutdown {
 			reclaimStuckJobs(name, stream)
 		}
 
+		//if shutdown triggered → exit loop immediately
+		if Shutdown {
+			break
+		}
+
 		//waiting for the job from redis
-		//XREADGROUP will block for 2 sec if no job (not forever like before)
+		//XREADGROUP will block shortly so shutdown is responsive
 		streams, err := db.RDB.XReadGroup(db.Ctx, &redis.XReadGroupArgs{
-			Group:    "workers",             //all workers share this group
-			Consumer: name,                  //worker identity (worker-free / worker-premium)
-			Streams:  []string{stream, ">"}, //IMPORTANT → use dynamic stream (free/premium)
-			Count:    1,                     //grab 1 job at a time
-			Block:    2 * time.Second,       //wait max 2 sec for new job
+			Group:    "workers",              //all workers share this group
+			Consumer: name,                   //worker identity (worker-free / worker-premium)
+			Streams:  []string{stream, ">"},  //IMPORTANT → use dynamic stream (free/premium)
+			Count:    1,                      //grab 1 job at a time
+			Block:    500 * time.Millisecond, //short wait → faster shutdown response
 		}).Result()
 
 		//handle redis errors properly
@@ -64,6 +72,11 @@ func StartWorker(name string, stream string) {
 		var job models.Job
 		db.DB.First(&job, jobID)
 
+		//do not start new jobs during shutdown
+		if Shutdown {
+			break
+		}
+
 		//acquire slot → if 3 jobs already running, this will wait
 		workerPool <- struct{}{}
 
@@ -72,7 +85,10 @@ func StartWorker(name string, stream string) {
 		msgID := msg.ID
 
 		//run job in goroutine (parallel execution)
+		Wg.Add(1)
+
 		go func() {
+			defer Wg.Done()
 			//release slot when done (VERY IMPORTANT)
 			defer func() { <-workerPool }()
 
@@ -95,7 +111,7 @@ func StartWorker(name string, stream string) {
 }
 
 func processJob(job models.Job, workerName string) bool {
-	time.Sleep(2 * time.Second)
+	time.Sleep(8 * time.Second)
 
 	if job.Processed {
 		log.Printf("[%s] Job %d already processed, skipping\n", workerName, job.ID)
@@ -150,17 +166,18 @@ func reclaimStuckJobs(name string, stream string) {
 	res, nextID, err := db.RDB.XAutoClaim(db.Ctx, &redis.XAutoClaimArgs{
 		Stream:   stream,
 		Group:    "workers",
-		Consumer: name,            //the worker whihc is douing the reclaiming
-		MinIdle:  3 * time.Second, //onlty grab jobs that have been stuck for more than 5 sec
-		Start:    lastId,          //start cgecking from very beginning of the stream
-		Count:    5,               //grab upo 5 stuck jibs a a time
+		Consumer: name,             //the worker whihc is douing the reclaiming
+		MinIdle:  10 * time.Second, //onlty grab jobs that have been stuck
+		Start:    lastId,           //cursor for scanning
+		Count:    5,                //grab up to 5 stuck jobs
 	}).Result()
 
 	if err != nil {
 		log.Println("XAUTOCLAIM error", err)
 		return
 	}
-	//update cursos
+
+	//update cursor
 	lastId = nextID
 
 	if len(res) == 0 {
@@ -170,23 +187,51 @@ func reclaimStuckJobs(name string, stream string) {
 	log.Println("Reclaimed jobs found...")
 
 	for _, msg := range res {
-		//idnetiofy jiobs from the redis message
+
+		//if shutting down → stop reclaim processing
+		if Shutdown {
+			return
+		}
+
+		//identify jobs from the redis message
 		jobIDStr := fmt.Sprintf("%v", msg.Values["job_id"])
 		jobId, _ := strconv.Atoi(jobIDStr)
 
 		var job models.Job
 		db.DB.First(&job, jobId)
 
-		log.Printf("[%s] Reclaimed job ID: %d\n", name, jobId)
-
-		//trying to prtocess it again
-		success := processJob(job, name)
-
-		//only acknowledge if it acttually worked this time
-		if success {
-			db.RDB.XAck(db.Ctx, "jobs_stream", "workers", msg.ID)
+		//skip already completed jobs (VERY IMPORTANT)
+		if job.Status == "done" || job.Status == "failed" {
+			continue
 		}
 
+		//skip already processed jobs (extra safety)
+		if job.Processed {
+			continue
+		}
+
+		//run reclaimed job in goroutine (same as normal flow)
+		Wg.Add(1)
+
+		jobCopy := job
+		msgID := msg.ID
+
+		go func() {
+			defer Wg.Done()
+
+			log.Printf("[%s] Reclaimed job ID: %d\n", name, jobCopy.ID)
+
+			success := processJob(jobCopy, name)
+
+			if success {
+				err := db.RDB.XAck(db.Ctx, stream, "workers", msgID).Err()
+				if err != nil {
+					log.Println("Failed to ACK:", err)
+				}
+			}
+		}()
 	}
 
+	//small delay to avoid aggressive reclaim loops
+	time.Sleep(2 * time.Second)
 }

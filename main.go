@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/ankush/go-jobs/db"
 	"github.com/ankush/go-jobs/handler"
@@ -30,12 +36,61 @@ func main() {
 	r.GET("/jobs", handler.GetJobs)
 	r.GET("/jobs/:id", handler.GetJobsById)
 
-	//start worker her
+	//start worker here
 	go worker.StartWorker("worker-free", "jobs_stream_free")
 	go worker.StartWorker("worker-premium", "jobs_stream_premium")
+
+	//listen for the ctrl + c
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGABRT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		log.Printf("Shutting down workers...")
+
+		worker.Shutdown = true
+
+		worker.Wg.Wait()
+
+		log.Printf("All jobs completed..EXITING")
+		os.Exit(0)
+	}()
 
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "Server running"})
 	})
-	r.Run(":8080")
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
+	}
+
+	//run server in goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+	quit = make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	//BLOCK here (this is key)
+	<-quit
+
+	log.Println("Shutting down workers...")
+
+	worker.Shutdown = true
+
+	//wait for all worker goroutines
+	worker.Wg.Wait()
+
+	log.Println("Shutting down HTTP server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Println("Server forced to shutdown:", err)
+	}
+
+	log.Println("All jobs completed. Exiting.")
 }
