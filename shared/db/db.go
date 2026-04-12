@@ -2,7 +2,9 @@ package db
 
 import (
 	"log"
+	"os"
 
+	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -10,8 +12,8 @@ import (
 var DB *gorm.DB
 
 func Connect() {
-
-	dsn := "host=localhost user=postgres password=ankush123 dbname=go_jobs_db port=5432 sslmode=disable"
+	godotenv.Load()
+	dsn := os.Getenv("DB_DSN")
 
 	var err error
 

@@ -21,12 +21,14 @@ func main() {
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_free", "workers", "0")
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_premium", "workers", "0")
 
-	db.DB.AutoMigrate(&models.Job{})
+	db.DB.AutoMigrate(&models.Job{}, &models.Outbox{})
 
 	go workerpkg.StartWorker("worker-free", "jobs_stream_free")
 	go workerpkg.StartWorker("worker-premium", "jobs_stream_premium")
 
 	log.Println("Worker running...")
+
+	go workerpkg.StartOutBoxProcessor()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

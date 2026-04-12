@@ -18,7 +18,7 @@ func main() {
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_free", "workers", "0")
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_premium", "workers", "0")
 
-	db.DB.AutoMigrate(&models.Job{})
+	db.DB.AutoMigrate(&models.Job{}, &models.Outbox{})
 
 	r := gin.Default()
 

@@ -1,13 +1,11 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/ankush/go-jobs/shared/db"
 	"github.com/ankush/go-jobs/shared/models"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
 func CreateJob(c *gin.Context) {
@@ -23,26 +21,37 @@ func CreateJob(c *gin.Context) {
 	job.Status = "pending"
 	job.Retries = 0
 
-	//save he databse
-	db.DB.Create(&job)
+	//START THE TRANSCATION
+	tx := db.DB.Begin()
 
-	//pushing job id to reddis queue
+	//saver ther databse
+	if err := tx.Create(&job).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to crteate job"})
+		return
+	}
 
+	//decidinfg which stram based ion prioroty
 	stream := "jobs_stream_free"
-
 	if job.Priority == "premium" {
 		stream = "jobs_stream_premium"
 	}
-	_, err := db.RDB.XAdd(db.Ctx, &redis.XAddArgs{
-		Stream: stream,
-		Values: map[string]interface{}{
-			"job_id": job.ID,
-		},
-	}).Result()
 
-	if err != nil {
-		log.Println("Failed to push job to Redis stream:", err)
+	//insert into outbox tbale instyead of pusghimg directly into redis
+	outbox := models.Outbox{
+		JobID:  job.ID,
+		Status: "pending",
+		Stream: stream, //worker know where tio push
 	}
+
+	if err := tx.Create(&outbox).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "faield to create outbox"})
+		return
+	}
+
+	//commit transaction
+	tx.Commit()
 
 	//send back 200
 	c.JSON(http.StatusOK, job)

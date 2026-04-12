@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -15,7 +16,7 @@ var Ctx = context.Background()
 
 func ConnectRedis() {
 	RDB = redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: os.Getenv("REDIS_ADDR"),
 	})
 	//ping to reddis
 
