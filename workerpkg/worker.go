@@ -1,4 +1,4 @@
-package worker
+package workerpkg
 
 import (
 	"fmt"
@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ankush/go-jobs/db"
-	"github.com/ankush/go-jobs/models"
+	"github.com/ankush/go-jobs/shared/db"
+	"github.com/ankush/go-jobs/shared/models"
 	"github.com/redis/go-redis/v9"
 )
 

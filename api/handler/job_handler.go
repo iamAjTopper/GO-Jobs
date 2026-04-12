@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/ankush/go-jobs/db"
-	"github.com/ankush/go-jobs/models"
+	"github.com/ankush/go-jobs/shared/db"
+	"github.com/ankush/go-jobs/shared/models"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
