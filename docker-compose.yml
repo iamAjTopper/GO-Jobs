@@ -17,7 +17,13 @@ services:
       - "6379:6379"
 
   api:
+<<<<<<< HEAD
     build: .
+=======
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+>>>>>>> master
     command: go run api/main.go
     ports:
       - "8080:8080"
@@ -31,8 +37,17 @@ services:
       REDIS_ADDR: "redis:6379"
 
   worker:
+<<<<<<< HEAD
     build: .
     command: go run worker/main.go
+=======
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: go run worker/main.go
+    ports:
+      - "2112:2112"
+>>>>>>> master
     depends_on:
       - postgres
       - redis
@@ -40,4 +55,22 @@ services:
       - .env
     environment:
       DB_DSN: "host=postgres user=postgres password=ankush123 dbname=go_jobs_db port=5432 sslmode=disable"
+<<<<<<< HEAD
       REDIS_ADDR: "redis:6379"
+=======
+      REDIS_ADDR: "redis:6379"
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+>>>>>>> master

@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/ankush/go-jobs/shared/db"
+<<<<<<< HEAD
+=======
+	"github.com/ankush/go-jobs/shared/metrics"
+>>>>>>> master
 	"github.com/ankush/go-jobs/shared/models"
 	"github.com/redis/go-redis/v9"
 )
@@ -112,6 +116,17 @@ func StartWorker(name string, stream string) {
 
 func processJob(job models.Job, workerName string) bool {
 	time.Sleep(8 * time.Second)
+<<<<<<< HEAD
+=======
+	log.Printf(
+		"[%s] Job %d | Type=%s | Retries=%d | Processed=%v",
+		workerName,
+		job.ID,
+		job.Type,
+		job.Retries,
+		job.Processed,
+	)
+>>>>>>> master
 
 	if job.Processed {
 		log.Printf("[%s] Job %d already processed, skipping\n", workerName, job.ID)
@@ -129,6 +144,14 @@ func processJob(job models.Job, workerName string) bool {
 	case "fail":
 		if job.Retries >= 3 {
 			log.Printf("[%s] Job %d permanently failed\n", workerName, job.ID)
+<<<<<<< HEAD
+=======
+
+			fmt.Println(">>> INCREMENTING FAILED METRIC")
+			metrics.JobsFailed.Inc()
+			fmt.Println(">>> FAILED METRIC INCREMENTED")
+
+>>>>>>> master
 			db.DB.Model(&job).Updates(map[string]interface{}{
 				"status":    "failed",
 				"processed": true,
@@ -153,10 +176,20 @@ func processJob(job models.Job, workerName string) bool {
 		return true
 	}
 
+<<<<<<< HEAD
+=======
+	log.Println(">>> INCREMENTING JOB METRIC")
+	metrics.JobProcessed.Inc()
+
+>>>>>>> master
 	db.DB.Model(&job).Updates(map[string]interface{}{
 		"status":    "done",
 		"processed": true,
 	})
+<<<<<<< HEAD
+=======
+
+>>>>>>> master
 	return true
 }
 

@@ -11,6 +11,13 @@ import (
 	"github.com/ankush/go-jobs/shared/db"
 	"github.com/ankush/go-jobs/shared/models"
 	"github.com/ankush/go-jobs/workerpkg"
+<<<<<<< HEAD
+=======
+	"github.com/ankush/go-jobs/shared/metrics"
+	"net/http"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	
+>>>>>>> master
 )
 
 func main() {
@@ -18,6 +25,16 @@ func main() {
 	db.Connect()
 	db.ConnectRedis()
 
+<<<<<<< HEAD
+=======
+	metrics.Init()
+	go func() {
+	http.Handle("/metrics", promhttp.Handler())
+	log.Println("Worker metrics running on :2112")
+	http.ListenAndServe(":2112", nil)
+	}()
+
+>>>>>>> master
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_free", "workers", "0")
 	db.RDB.XGroupCreateMkStream(db.Ctx, "jobs_stream_premium", "workers", "0")
 
