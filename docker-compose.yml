@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ankush123
+      POSTGRES_DB: go_jobs_db
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    command: go run api/main.go
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DB_DSN: "host=postgres user=postgres password=ankush123 dbname=go_jobs_db port=5432 sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+
+  worker:
+    build: .
+    command: go run worker/main.go
+    ports:
+    - "2112:2112"
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DB_DSN: "host=postgres user=postgres password=ankush123 dbname=go_jobs_db port=5432 sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
